@@ -20,6 +20,12 @@
 #include <thread>
 #include <sstream>
 #include <vector>
+#include <mutex>
+
+#include "Resource.h"
+#include "Process.h"
+#include "Command.h"
+#include "Random.h"
 
 /*
    If you want your variables and data structures for the banker's
@@ -30,65 +36,6 @@
    they're usually correct!), but systems programmers do it all the
    time, so I'm allowing it here.
 */
-
-class Resource {
-private: 
-    int available;
-    int total;
-public:
-    Resource(int available) : available(available), total(available) { }
-
-    int getAvailable() {
-        return this->available;
-    }
-    int getTotal() {
-        return this->total;
-    }
-
-    void setAvailable(int value) {
-        this->available = value;
-    }
-    void setTotal(int value) {
-        this->total = value;
-    }
-};
-
-class Process {
-private:
-    std::vector<int> maxClaims;
-    std::vector<int> currentAlloc;
-    std::vector<int> currentReq;
-public:
-
-    std::vector<int> getMaxClaims() {
-        return this->maxClaims;
-    }
-    std::vector<int> getCurrentAlloc() {
-        return this->currentAlloc;
-    }
-    std::vector<int> getCurrentReq() {
-        return this->currentReq;
-    }
-    int getPotentialRequests(int resource) {
-        return this->getMaxClaims()[resource] - this->getCurrentAlloc()[resource];
-    }
-
-    void addResource(int maxClaims, int currentAlloc, int currentReq) {
-        this->maxClaims.push_back(maxClaims);
-        this->currentAlloc.push_back(currentAlloc);
-        this->currentReq.push_back(currentReq);
-    }
-
-    void setMaxClaims(int resource, int value) {
-        this->maxClaims[resource] = value;
-    }
-    void setCurrentAlloc(int resource, int value) {
-        this->currentAlloc[resource] = value;
-    }
-    void setCurrentReq(int resource, int value) {
-        this->currentReq[resource] = value;
-    }
-};
 
 bool isBlocked(std::vector<Resource> resourceList, Process process) {
     for (int i = 0; i < resourceList.size(); i++) {
@@ -150,6 +97,154 @@ void displayResources(std::vector<Resource>& resourceList) {
     for (int j = 0; j < resourceList.size(); j++) {
         int total = resourceList[j].getTotal();
         std::cout << total << std::endl;
+    }
+}
+
+void executeCommand(std::vector<Resource>& resourceList, std::vector<Process>& processList, Command& command) {
+    int available = resourceList[command.getResource()].getAvailable();
+    int currAlloc = processList[command.getProcess()].getCurrentAlloc()[command.getResource()];
+    int max = processList[command.getProcess()].getMaxClaims()[command.getResource()];
+
+    if (command.getType() == CommandType::REQUEST) {
+        std::vector<Resource> tempRL = resourceList;
+        std::vector<Process> tempPL = processList;
+
+        if (command.getAmount() > available) {
+            std::cout << "Process " << command.getProcess() << " requested " << command.getAmount() << " units of resource " << command.getResource() << ". Result: Denied" << std::endl;
+            std::cout << "Reason: Only " << available << " units of resource " << command.getResource() << " are available" << std::endl;
+            return;
+        }
+        else if ((currAlloc + command.getAmount()) > max) {
+            std::cout << "Process " << command.getProcess() << " requested " << command.getAmount() << " units of resource " << command.getResource() << ". Result: Denied" << std::endl;
+            std::cout << "Reason: Process " << command.getProcess() << " Current Allocation (" << currAlloc << ") + Requested (" << command.getAmount() << ") > Max (" << max << ")" << std::endl;
+            return;
+        }
+
+        tempRL[command.getResource()].setAvailable(available - command.getAmount());
+        tempPL[command.getProcess()].setCurrentAlloc(command.getResource(), currAlloc + command.getAmount());
+
+        if (isReducible(tempRL, tempPL)) {
+            resourceList = tempRL;
+            processList = tempPL;
+            std::cout << "Process " << command.getProcess() << " requested " << command.getAmount() << " units of resource " << command.getResource() << ". Result: Granted" << std::endl;
+            return;
+        }
+
+        std::cout << "Process " << command.getProcess() << " requested " << command.getAmount() << " units of resource " << command.getResource() << ". Result: Denied" << std::endl;
+        std::cout << "Reason: Resource allocation graph was not reducible." << std::endl;
+        return;
+    }
+    else {
+        if (command.getAmount() < 0) {
+            std::cout << "Error releasing " << command.getAmount() << " units of resource " << command.getResource() << " from process " << command.getProcess() << "." << std::endl;
+            std::cout << "Reason: Cannot release a negative number of units." << std::endl;
+            return;
+        }
+        else if (command.getAmount() > currAlloc) {
+            std::cout << "Error releasing " << command.getAmount() << " units of resource " << command.getResource() << " from process " << command.getProcess() << "." << std::endl;
+            std::cout << "Reason: Process " << command.getProcess() << " only has " << currAlloc << " units currently allocated." << std::endl;
+            return;
+        }
+
+        resourceList[command.getResource()].setAvailable(available + command.getAmount());
+        processList[command.getProcess()].setCurrentAlloc(command.getResource(), currAlloc - command.getAmount());
+        std::cout << "Process " << command.getProcess() << " released " << command.getAmount() << " units of resource " << command.getResource() << "." << std::endl;
+        return;
+    }
+}
+
+void runManual(std::vector<Resource>& resourceList, std::vector<Process>& processList) {
+    std::vector<Command> commandList;
+
+    std::string line;
+    std::getline(std::cin, line);
+
+    while (line != "end") {
+        std::stringstream ss(line);
+
+        std::string trash;
+        
+        std::string type;
+        int amount;
+        int resource;
+        int process;
+
+        // request/release (type) I (amount) of (trash) J (resource) for (trash) K (process)
+        ss >> type >> amount >> trash >> resource >> trash >> process;
+
+        if (type == "request") {
+            commandList.push_back(Command(CommandType::REQUEST, amount, resource, process));
+        }
+        else if (type == "release") {
+            commandList.push_back(Command(CommandType::RELEASE, amount, resource, process));
+        }
+        else {
+            std::cout << "Invalid command." << std::endl;
+        }
+
+        std::getline(std::cin, line);
+    }
+
+    for (int i = 0; i < commandList.size(); i++) {
+        executeCommand(resourceList, processList, commandList[i]);
+        std::cout << std::endl;
+    }
+}
+
+Command generateRequest(Random& rand, std::vector<Resource>& resourceList, Process& process, int processID, CommandType type) {
+    int resource = rand.randomInt(0, resourceList.size());
+    int amount = rand.randomInt(0, process.getMaxClaims()[resource]);
+
+    return Command(type, amount, resource, processID);
+}
+
+void runAutoCommands(std::mutex* m, std::vector<Resource>* resourceList, std::vector<Process>* processList, int processID, std::vector<Command>* requestCommands, std::vector<Command>* releaseCommands) {
+    for (int i = 0; i < 3; i++) {
+        m->lock();
+        executeCommand((*resourceList), (*processList), (*requestCommands)[i]);
+        std::cout << std::endl;
+        m->unlock();
+
+        
+        m->lock();
+        executeCommand((*resourceList), (*processList), (*releaseCommands)[i]);
+        std::cout << std::endl;
+        m->unlock();
+    }
+}
+
+void runAuto(std::vector<Resource>& resourceList, std::vector<Process>& processList) {
+    std::vector<std::vector<Command>> requestCommands;
+    std::vector<std::vector<Command>> releaseCommands;
+
+    Random rand;
+    std::mutex* m = new std::mutex;
+
+    for (int i = 0; i < processList.size(); i++) {
+        requestCommands.push_back(std::vector<Command>());
+        releaseCommands.push_back(std::vector<Command>());
+
+        // Generate Request Commands
+        for (int j = 0; j < 3; j++) {
+            requestCommands[i].push_back(generateRequest(rand, resourceList, processList[i], i, CommandType::REQUEST));
+        }
+        
+        // Generate Release Commands
+        for (int j = 0; j < 3; j++) {
+            releaseCommands[i].push_back(generateRequest(rand, resourceList, processList[i], i, CommandType::RELEASE));
+        }
+    }
+
+    std::vector<std::thread> threads;
+    
+    // Create a thread for each process
+    for (int i = 0; i < processList.size(); i++) {
+        threads.push_back(std::thread(runAutoCommands, m, &resourceList, &processList, i, &(requestCommands[i]), &(releaseCommands[i])));
+    }
+    
+    // Join threads
+    for (int i = 0; i < processList.size(); i++) {
+        threads[i].join();
     }
 }
 
@@ -257,7 +352,7 @@ int main (int argc, char *argv[]) {
         for (int j = 0; j < num_resources; j++) {
             // Check if more is allocated than the max
             if (currentAlloc[j] > maxClaims[j]) {
-                std::cout << "Invalid initial conditions: Process " << i + 1 << " has more allocated than the max claims for resource " << j + 1 << "." << std::endl;
+                std::cout << "Invalid initial conditions: Process " << i << " has more allocated than the max claims for resource " << j << "." << std::endl;
                 exit(-1);
             }
 
@@ -268,7 +363,7 @@ int main (int argc, char *argv[]) {
 
     if (!isReducible(resourceList, processList)) {
         std::cout << "Invalid initial conditions: The resource allocation graph is not completely reducible." << std::endl;
-        exit(-1);
+        exit(-2);
     }
 
     displayProcesses(resourceList, processList);
@@ -279,6 +374,22 @@ int main (int argc, char *argv[]) {
     // as separate methods within this class, as separate classes
     // with their own main methods, or as additional code within
     // this main method.
+
+    // Get mode
+    std::string mode;
+    std::getline(std::cin, mode);
+    
+    if (mode == "manual") {
+        runManual(resourceList, processList);
+    }
+    else if (mode == "auto" || mode == "automatic") {
+        runAuto(resourceList, processList);
+    }
+    else {
+        std::cout << "Invalid mode. Valid modes: manual or auto/automatic." << std::endl;
+        exit(-3);
+    }
+
     
     return 0; // terminate normally
 }
