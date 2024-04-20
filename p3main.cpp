@@ -136,12 +136,12 @@ void executeCommand(std::vector<Resource>& resourceList, std::vector<Process>& p
     }
     else {
         if (command.getAmount() < 0) {
-            std::cout << "Error releasing " << command.getAmount() << " units of resource " << command.getResource() << " from process " << command.getProcess() << "." << std::endl;
+            std::cout << "Process " << command.getProcess() << " unable to release " << command.getAmount() << " units of resource " << command.getResource() << "." << std::endl;
             std::cout << "Reason: Cannot release a negative number of units." << std::endl;
             return;
         }
         else if (command.getAmount() > currAlloc) {
-            std::cout << "Error releasing " << command.getAmount() << " units of resource " << command.getResource() << " from process " << command.getProcess() << "." << std::endl;
+            std::cout << "Process " << command.getProcess() << " unable to release " << command.getAmount() << " units of resource " << command.getResource() << "." << std::endl;
             std::cout << "Reason: Process " << command.getProcess() << " only has " << currAlloc << " units currently allocated." << std::endl;
             return;
         }
@@ -156,6 +156,7 @@ void executeCommand(std::vector<Resource>& resourceList, std::vector<Process>& p
 void runManual(std::vector<Resource>& resourceList, std::vector<Process>& processList) {
     std::vector<Command> commandList;
 
+    std::cout << "Enter request/release commands. Enter 'end' when finished: " << std::endl;
     std::string line;
     std::getline(std::cin, line);
 
@@ -192,7 +193,7 @@ void runManual(std::vector<Resource>& resourceList, std::vector<Process>& proces
 }
 
 Command generateRequest(Random& rand, std::vector<Resource>& resourceList, Process& process, int processID, CommandType type) {
-    int resource = rand.randomInt(0, resourceList.size());
+    int resource = rand.randomInt(0, resourceList.size() - 1);
     int amount = rand.randomInt(0, process.getMaxClaims()[resource]);
 
     return Command(type, amount, resource, processID);
@@ -366,9 +367,6 @@ int main (int argc, char *argv[]) {
         exit(-2);
     }
 
-    displayProcesses(resourceList, processList);
-    displayResources(resourceList);
-
     // 5. Go into either manual or automatic mode, depending on
     // the value of args[0]; you could implement these two modes
     // as separate methods within this class, as separate classes
@@ -376,8 +374,8 @@ int main (int argc, char *argv[]) {
     // this main method.
 
     // Get mode
-    std::string mode;
-    std::getline(std::cin, mode);
+
+    std::string mode = argv[1];
     
     if (mode == "manual") {
         runManual(resourceList, processList);
